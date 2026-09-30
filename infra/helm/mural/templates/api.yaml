@@ -1,0 +1,90 @@
+{{- $name := include "mural.api.fullname" . -}}
+{{- $sel := dict "ctx" . "component" "api" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- /* Com HPA ligado, quem manda no número de réplicas é ele, não o chart. */}}
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mural.selectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mural.selectorLabels" $sel | nindent 8 }}
+      annotations:
+        # Troca de senha/config faz rollout automático dos pods.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: api
+          image: {{ include "mural.image" .Values.api.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "mural.fullname" . }}-config
+                  key: PORT
+            # A senha só chega ao pod via Secret — nunca em texto no manifest.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.secretName" . }}
+                  key: DATABASE_URL
+          # liveness -> /healthz: "o processo está vivo?". Não depende do banco,
+          # então não mata o pod enquanto a migração ainda roda.
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.api.livenessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.api.livenessProbe.failureThreshold }}
+          # readiness -> /readyz: "posso receber tráfego?". Só passa com banco
+          # respondendo e tabela criada; até lá o pod fica fora do Service.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.readinessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.api.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mural.selectorLabels" $sel | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

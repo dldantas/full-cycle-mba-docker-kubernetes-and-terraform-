@@ -1,0 +1,12 @@
+# Configuração não sensível da API e do front.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mural.fullname" . }}-config
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+data:
+  # Porta em que a API escuta.
+  PORT: {{ .Values.api.port | quote }}
+  # Upstream do proxy /api do nginx: o Service da API (porta 80).
+  API_UPSTREAM: {{ printf "%s:80" (include "mural.api.fullname" .) | quote }}

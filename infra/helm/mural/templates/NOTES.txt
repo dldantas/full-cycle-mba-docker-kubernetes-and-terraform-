@@ -1,0 +1,9 @@
+Mural de Recados implantado no namespace {{ .Release.Namespace }}.
+
+{{- if .Values.ingress.enabled }}
+Acesse: http://{{ .Values.ingress.host }}
+{{- end }}
+
+Acompanhe:
+  kubectl -n {{ .Release.Namespace }} get pods,job,pvc
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "mural.fullname" . }}-migrate

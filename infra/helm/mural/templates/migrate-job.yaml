@@ -1,0 +1,71 @@
+{{- /*
+Job de migração como hook post-install/post-upgrade.
+
+Por que "post" e não "pre": num pre-install o Postgres (StatefulSet) e o Secret
+ainda não existem. No post-*, os recursos normais já foram aplicados; o Job espera
+o banco aceitar conexões, aplica as migrations em ordem e termina. Enquanto isso a
+API já está de pé (liveness em /healthz passa), mas fora do balanceamento
+(readiness em /readyz falha até a tabela existir). O Helm só considera a release
+concluída quando o hook termina com sucesso, e roda o Job de novo a cada release
+(before-hook-creation apaga o anterior). As migrations são idempotentes
+(CREATE TABLE IF NOT EXISTS / seed condicional), então re-rodar é seguro.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mural.fullname" . }}-migrate
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mural.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70   # usuário "postgres" da imagem alpine
+        runAsGroup: 70
+      containers:
+        - name: migrate
+          image: {{ include "mural.image" .Values.migrations.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.secretName" . }}
+                  key: DATABASE_URL
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "aguardando o Postgres..."
+              until pg_isready -d "$DATABASE_URL" -t 2 >/dev/null 2>&1; do sleep 2; done
+              for f in $(ls /migrations/*.sql | sort); do
+                echo "aplicando $f"
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+              done
+              echo "migrations aplicadas"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: {{ include "mural.fullname" . }}-migrations

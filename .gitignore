@@ -8,9 +8,16 @@
 *.tfstate.*
 .terraform.lock.hcl
 solucao/terraform/.kube/
+infra/terraform/.kube/
+*.tfvars
+
+# Worktrees locais de ferramentas
+.kilo/
 
 # Node / misc
 node_modules/
 .DS_Store
 
 /solucao
+# Segredos locais do compose
+.env

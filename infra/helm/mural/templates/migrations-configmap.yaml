@@ -1,0 +1,10 @@
+# As migrations (files/migrations/*.sql) empacotadas no chart, montadas no Job.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mural.fullname" . }}-migrations
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+data:
+{{ (.Files.Glob "files/migrations/*.sql").AsConfig | indent 2 }}

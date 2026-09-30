@@ -1,0 +1,105 @@
+# Valores do chart do Mural de Recados.
+# Nenhuma credencial vive aqui: a senha do banco é injetada na instalação
+# (o Terraform gera uma com random_password e passa via set_sensitive) ou vem
+# de um Secret já existente (database.existingSecret).
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Imagens carregadas no kind com `kind load docker-image` não existem em registry:
+# nunca use Always aqui em cluster local.
+imagePullPolicy: IfNotPresent
+
+database:
+  user: mural
+  name: mural
+  port: 5432
+  # OBRIGATÓRIO (a menos que existingSecret seja usado). Nunca versione um valor aqui:
+  #   helm install ... --set database.password=$(openssl rand -hex 16)
+  password: ""
+  # Nome de um Secret pré-existente com as chaves POSTGRES_USER, POSTGRES_PASSWORD,
+  # POSTGRES_DB e DATABASE_URL. Se definido, o chart não cria o próprio Secret.
+  existingSecret: ""
+
+api:
+  image:
+    repository: mural-api
+    tag: latest
+  replicas: 2
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  # liveness -> /healthz (processo vivo, não toca no banco)
+  livenessProbe:
+    path: /healthz
+    initialDelaySeconds: 3
+    periodSeconds: 10
+    failureThreshold: 3
+  # readiness -> /readyz (banco responde E a migração já rodou)
+  readinessProbe:
+    path: /readyz
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    failureThreshold: 3
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 50
+
+web:
+  image:
+    repository: mural-web
+    tag: latest
+  replicas: 2
+  port: 8080
+  resources:
+    requests:
+      cpu: 25m
+      memory: 16Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+
+postgres:
+  image:
+    repository: postgres
+    tag: 16-alpine
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  storage:
+    size: 1Gi
+    # vazio = StorageClass default do cluster (no kind: "standard", local-path).
+    storageClassName: ""
+
+migrations:
+  image:
+    repository: postgres
+    tag: 16-alpine
+  backoffLimit: 6
+  # Tempo máximo do Job (inclui esperar o Postgres ficar pronto).
+  activeDeadlineSeconds: 300
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+ingress:
+  enabled: true
+  className: traefik
+  # *.localtest.me resolve para 127.0.0.1 — dispensa mexer em /etc/hosts.
+  host: mural.localtest.me
+  annotations: {}

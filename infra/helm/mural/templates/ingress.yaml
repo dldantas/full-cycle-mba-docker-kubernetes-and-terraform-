@@ -1,0 +1,33 @@
+{{- if .Values.ingress.enabled }}
+# / -> front, /api -> API. O Traefik escolhe o prefixo mais longo.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mural.fullname" . }}
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "mural.api.fullname" . }}
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "mural.web.fullname" . }}
+                port:
+                  name: http
+{{- end }}

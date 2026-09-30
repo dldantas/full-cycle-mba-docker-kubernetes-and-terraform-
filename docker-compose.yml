@@ -1,0 +1,74 @@
+# Compose de DESENVOLVIMENTO — serve só para entender a app (não é a entrega).
+# Usa apenas imagens oficiais; os Dockerfiles de verdade estão em app/docker/.
+# Ordem de subida: db -> migrate -> api -> web.
+#
+#   cp .env.example .env   # e defina POSTGRES_PASSWORD (o .env não é versionado)
+#   docker compose up
+#   abra http://localhost:8080
+
+x-db-env: &db-env
+  POSTGRES_USER: ${POSTGRES_USER:-mural}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env (veja .env.example)}
+  POSTGRES_DB: ${POSTGRES_DB:-mural}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment: *db-env
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-mural}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env (veja .env.example)}
+      PGDATABASE: ${POSTGRES_DB:-mural}
+    volumes:
+      - ./app/api/migrations:/migrations:ro
+    # Aplica todas as migrations em ordem alfabética (001_, 002_, ...) e encerra.
+    command: >
+      sh -c 'set -e; for f in /migrations/*.sql; do echo "aplicando $$f"; psql -v ON_ERROR_STOP=1 -f "$$f"; done'
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: golang:1.23-alpine
+    working_dir: /src
+    command: go run .
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-mural}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env (veja .env.example)}@db:5432/${POSTGRES_DB:-mural}?sslmode=disable
+    volumes:
+      - ./app/api:/src:ro
+      - go-cache:/go/pkg/mod
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    image: nginx:1.27-alpine
+    environment:
+      API_UPSTREAM: api:8080
+    volumes:
+      - ./app/web:/usr/share/nginx/html:ro
+      # A imagem oficial roda envsubst em /etc/nginx/templates/*.template no boot.
+      - ./app/web/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+
+volumes:
+  db-data:
+  go-cache:
